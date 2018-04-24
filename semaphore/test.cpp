@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <unistd.h>
 
-//#define PV
+#define PV
 
 int main()
 {
@@ -77,6 +77,7 @@ int main()
         }
         wait(NULL);
     }
+	destroy_sems(semid);
 #endif
 
     return 0;

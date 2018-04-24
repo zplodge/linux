@@ -69,7 +69,7 @@ static int comm_sem_op(int semid, int which, int op)
     struct sembuf _sembuf;
     _sembuf.sem_num = which;
     _sembuf.sem_op = op;
-    _sembuf.sem_flg = 0; //  IPC_NOWAIT  SEM_UNDO
+    _sembuf.sem_flg = SEM_UNDO; //  IPC_NOWAIT  SEM_UNDO
     return semop(semid, &_sembuf, 1);
 }
 
