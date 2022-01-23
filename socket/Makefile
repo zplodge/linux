@@ -14,7 +14,7 @@ client: client.o
 	$(CC) $(CFLAGS) $^ -o $@
 
 clean:
-	rm -rf *.o *.gch $(EXECUTABLE)
+	rm -rf *.o *.gch $(EXECUTABLE) data head tail
 leaks:
 	valgrind --leak-check=yes ./$(EXECUTABLE)
 
