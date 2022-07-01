@@ -5,9 +5,16 @@
 
 USBTOSDIODIR = $(PWD)
 
-KDIR ?= /lib/modules/$(shell uname -r)/build
-
-include $(KDIR)/.config
+# KDIR ?= /lib/modules/$(shell uname -r)/build
+DRIVER_PATH := $(shell pwd)
+#export KERNELDIR ?= $(DRIVER_PATH)/../../../../../../out/target/product/T963/obj/KERNEL_OBJ
+#export KBUILDDIR ?= $(DRIVER_PATH)/../../../../../../out/target/product/T963/obj/KERNEL_OBJ
+#CROSS_COMPILE ?= /opt/gcc-linaro-6.3.1-2017.02-x86_64_arm-linux-gnueabihf/bin/arm-linux-gnueabihf-
+ARCH := arm
+export KERNELDIR=/lib/modules/$(shell uname -r)/build
+export KBUILDDIR=/lib/modules/$(shell uname -r)/build
+# include $(KDIR)/.config
+# include $(KERNELDIR)/.config
 
 
 MOD_SRC = st
@@ -28,8 +35,8 @@ default: all
 all: modules
 
 modules:
-	$(MAKE) -j4 -C $(KDIR) M=$$PWD modules
-
+#	$(MAKE) -C $(KERNELDIR) CROSS_COMPILE=$(CROSS_COMPILE) ARCH=$(ARCH) O=$(KBUILDDIR) M=$(USBTOSDIODIR) $@
+	$(MAKE) -C $(KERNELDIR) O=$(KBUILDDIR) M=$(DRIVER_PATH) $@
 ins:
 	@sudo insmod $(MOD_SRC).ko
 
@@ -48,4 +55,5 @@ clean:
 	@rm -f modules.order
 	@rm -f Module.symvers
 	@rm -f *.o.rc
+	@rm -f $(MOD_SRC).mod
 

@@ -78,10 +78,49 @@ static int skb_copy_expand_t(struct sk_buff *skb)
     return 1;
 }
 
+static void byte_copy_test(void)
+{
+	u64 src = 0x1111111122222222;
+	u32 dest[2] = {0};
+	u64 temp = 0;
+	u32 temp1 = 0;
+	//dest[0] = src;
+	//dest[1] = src >> 32ULL;
+	dest[0] = 0xee;
+	dest[1] = 0xff;
+	temp = src >> 32ULL;
+	temp1 = (u32)temp;
+	
+	printk("%s000: src_low:0x%08x, src_high:0x%08x, dest0:0x%08x, dest1:0x%08x \n", __func__, src ,(src>>32), dest[0], dest[1]);
+	printk("%s111: src_low:0x%08x, src_high:0x%08x, dest0:0x%08x, dest1:0x%08x \n", __func__, (u32)src ,(u32)(src>>32), (u32)dest[0], (u32)dest[1]);
+	printk("%s222: src_low:0x%08x, src_high:0x%08x \n", __func__, src ,src>>32);
+	printk("dest0:0x%08x, dest1:0x%08x \n", dest[0], dest[1]);
+	printk("temp:0x%08x, temp1:0x%08x \n", temp, temp1);
+	printk("src_addr1:0x%08x, src_addr2:0x%08x, src_addr1:0x%08x, src_addr2:0x%08x\n", &src, &src + 1, *(u32*)&src, *((u32*)&src + 1));
+	
+	dest[0] = *(u32*)&src;
+	dest[1] = *((u32*)&src + 1);
+	printk("dest0:0x%08x, dest1:0x%08x \n", dest[0], dest[1]);
+	
+}
+
+static void skb_64_test(struct sk_buff *skb)
+{
+	u64 skb_new = 0;
+	u32 dest[2] = {0};
+	
+	skb_new = (u64)skb;
+	dest[0] = skb_new;
+	dest[1] = skb_new >> 32;
+	
+	//printk("%s: src_low:0x%08x, src_high:0x%08x, dest0:0x%08x, dest1:0x%08x \n", __func__, skb_new ,skb_new>>32, dest[0], dest[1]);
+	
+}
 static int st_init(void)
 {
     struct sk_buff *skb = dev_alloc_skb(SKB_LENGTH);
 	printk("%s enter!", __func__);
+#if 0
     skb_debug(skb);
 
     skb_reserve_t(skb);
@@ -89,7 +128,10 @@ static int st_init(void)
     skb_put_t(skb);
     skb_pull_t(skb);
     skb_copy_expand_t(skb);
-    
+#endif
+	byte_copy_test();
+	skb_64_test(skb);
+	
     return 0;
 }
 
