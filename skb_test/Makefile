@@ -1,8 +1,3 @@
-# 
-# wangc add for sdio to usb driver
-#
-#
-
 USBTOSDIODIR = $(PWD)
 
 # KDIR ?= /lib/modules/$(shell uname -r)/build
