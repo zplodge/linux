@@ -124,12 +124,12 @@ static int usb_init_rcv_transfer(struct usb_infac_pipe* pipe_rx)
             return -ENOMEM;
         }
 
-        urb = usb_alloc_urb(0, GFP_ATOMIC);
+        /*urb = usb_alloc_urb(0, GFP_ATOMIC);
         if (!urb) {
             return -ENOMEM;
-        }
+        }*/
 
-        urb_context->urb = urb;
+        urb = urb_context->urb;
         urb_context->pipe = pipe_rx;
         urb->context = urb_context;
 
@@ -171,12 +171,13 @@ static int usb_refill_rcv_transfer(struct usb_infac_pipe* pipe_rx)
         return -ENOMEM;
     }
 
-    urb = usb_alloc_urb(0, GFP_ATOMIC);
+    /*urb = usb_alloc_urb(0, GFP_ATOMIC);
     if (!urb) {
         return -ENOMEM;
-    }
+    }*/
 
-    urb_context->urb = urb;
+    //urb_context->urb = urb;
+    urb = urb_context->urb;
     urb_context->pipe = pipe_rx;
     urb->context = urb_context;
 
@@ -195,7 +196,6 @@ static int usb_refill_rcv_transfer(struct usb_infac_pipe* pipe_rx)
         usb_unanchor_urb(urb);
         usb_free_urb(urb);
         kfree_skb(urb_context->skb);
-        //goto err;
     }
 
     return 0;
@@ -221,11 +221,12 @@ int usb_hif_xmit(struct usb_host_priv *tr, struct sk_buff *skb)
         return -ENOMEM;
     }
 
-    urb = usb_alloc_urb(0, GFP_ATOMIC);
+    /*urb = usb_alloc_urb(0, GFP_ATOMIC);
     if (!urb) {
         return -ENOMEM;
-    }
+    }*/
 
+    urb = urb_context->urb;
     urb_context->pipe = &tr->usb_data.pipe_tx;
     urb_context->urb = urb;
     urb_context->skb = skb;
@@ -336,7 +337,7 @@ static void usb_free_urb_to_infac(struct usb_infac_pipe * pipe,
     if(urb_context->urb)
     {
         usb_unanchor_urb(urb_context->urb);
-        usb_free_urb(urb_context->urb);
+        //usb_free_urb(urb_context->urb);
         urb_context->urb = NULL;
     }
 	//spin_unlock_irqrestore(&g_usb->cs_lock, flags);
@@ -408,11 +409,19 @@ static int usb_create_pipe(struct usb_infac_pipe * pipe, int dir, bool flag)
         spin_lock_irqsave(&pipe->urb_lock, lock_flag);
         list_add(&urb_context->link, &pipe->urb_rx_list_head);
 
-        if(urb_context->urb) {
+        /*if(urb_context->urb) {
             usb_unanchor_urb(urb_context->urb);
             usb_free_urb(urb_context->urb);
             urb_context->urb = NULL;
+        }*/
+
+        urb_context->urb = usb_alloc_urb(0, GFP_ATOMIC);
+        if (!urb_context->urb) {
+            kfree(urb_context);
+            return -ENOMEM;
         }
+        usb_unanchor_urb(urb_context->urb);
+
         spin_unlock_irqrestore(&pipe->urb_lock, lock_flag);
     }
 
