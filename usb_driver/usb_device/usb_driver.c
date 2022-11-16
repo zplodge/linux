@@ -63,7 +63,7 @@ static void usb_transmit_complete(struct urb* urb)
     if(urb->status == 0 && urb->actual_length) {
         printk("%s:data:%p, len:%d, actual_length:%d \n", __func__, skb->data, skb->len, urb->actual_length);
         //print_hex_dump(KERN_DEBUG, "usb_transmit_complete: ", DUMP_PREFIX_NONE, 32, 1, skb->data, urb->actual_length, false);
-        skb_queue_tail(&pipe->io_complete_queue, skb);
+        skb_queue_tail(&pipe->io_skb_queue, skb);
 
 #ifdef CONFIG_WORKQUEUE
         schedule_work(&pipe->io_complete_work);
@@ -99,7 +99,7 @@ static void usb_recv_complete(struct urb* urb)
     if(urb->status == 0 && urb->actual_length) {
         print_hex_dump(KERN_DEBUG, "usb_recv_complete: ", DUMP_PREFIX_NONE, 32, 1, skb->data, urb->actual_length, false);
         skb->len = urb->actual_length;
-        skb_queue_tail(&pipe->io_complete_queue, skb);
+        skb_queue_tail(&pipe->io_skb_queue, skb);
 
 #ifdef CONFIG_WORKQUEUE
         schedule_work(&pipe->io_complete_work);
@@ -298,7 +298,7 @@ static void usb_tx_comp_work(struct work_struct* com_work)
 
     printk(DEBUG_FN_ENTRY_STR);
 
-    while(skb = skb_dequeue(&pipe->io_complete_queue)) {
+    while(skb = skb_dequeue(&pipe->io_skb_queue)) {
         printk("%s: skb_len:%d; \n", __func__, skb->len);
         print_hex_dump(KERN_DEBUG, "usb_tx_comp_work: ", DUMP_PREFIX_NONE, 32, 1, skb->data, skb->len, false);
         kfree_skb(skb);
@@ -316,7 +316,7 @@ static void usb_rx_comp_work(struct work_struct* com_work)
     struct sk_buff* skb = NULL;
 
     printk(DEBUG_FN_ENTRY_STR);
-    while(skb = skb_dequeue(&pipe->io_complete_queue)) {
+    while(skb = skb_dequeue(&pipe->io_skb_queue)) {
         printk("%s: skb_len:%d; \n", __func__, skb->len);
         print_hex_dump(KERN_DEBUG, "usb_rx_comp_work: ", DUMP_PREFIX_NONE, 32, 1, skb->data, skb->len, false);;
     }
@@ -333,7 +333,7 @@ static void usb_free_urb_to_infac(struct usb_infac_pipe * pipe,
 
 	//spin_lock_irqsave(&g_usb->cs_lock, flags);
 	pipe->urb_cnt++;
-	list_add(&urb_context->link, &pipe->urb_rx_list_head);
+	list_add(&urb_context->link, &pipe->urb_list_head);
     if(urb_context->urb)
     {
         usb_unanchor_urb(urb_context->urb);
@@ -348,9 +348,9 @@ static struct usb_urb_context* alloc_urb_context(struct usb_infac_pipe* pipe)
 {
     unsigned long flag;
     struct usb_urb_context* urb_context = NULL;
-    if(!list_empty(&pipe->urb_rx_list_head)) {
+    if(!list_empty(&pipe->urb_list_head)) {
         spin_lock_irqsave(&pipe->urb_lock, flag);
-        urb_context = list_first_entry(&pipe->urb_rx_list_head, struct usb_urb_context, link);
+        urb_context = list_first_entry(&pipe->urb_list_head, struct usb_urb_context, link);
         list_del(&urb_context->link);
         if(pipe->urb_cnt) {
             pipe->urb_cnt--;
@@ -369,7 +369,7 @@ static void free_urb_context(struct usb_urb_context* urb_context)
     struct usb_infac_pipe* pipe = urb_context->pipe;
 
     spin_lock_irqsave(&pipe->urb_lock, flag);
-    list_add(&urb_context->link, &pipe->urb_rx_list_head);
+    list_add(&urb_context->link, &pipe->urb_list_head);
     usb_unanchor_urb(urb_context->urb);
     urb_context->skb = NULL;
     pipe->urb_cnt++;
@@ -388,14 +388,11 @@ static int usb_create_pipe(struct usb_infac_pipe * pipe, int dir, bool flag)
     unsigned long lock_flag;
     printk("%s entry, dir: %d!!", __func__, dir);
 
-    pipe->dir = dir;
     pipe->urb_cnt = 0;
     init_usb_anchor(&pipe->urb_submitted);
-    INIT_LIST_HEAD(&pipe->urb_rx_list_head);
-    INIT_LIST_HEAD(&pipe->skb_rx_head);
-    INIT_LIST_HEAD(&pipe->skb_tx_head);
+    INIT_LIST_HEAD(&pipe->urb_list_head);
     spin_lock_init(&pipe->urb_lock);
-    skb_queue_head_init(&pipe->io_complete_queue);
+    skb_queue_head_init(&pipe->io_skb_queue);
 
     for (i = 0; i < (flag ? USB_MSG_URB_NUM : USB_DATA_URB_NUM); i++) {
         urb_context = kzalloc(sizeof(struct usb_urb_context), GFP_KERNEL);
@@ -407,7 +404,7 @@ static int usb_create_pipe(struct usb_infac_pipe * pipe, int dir, bool flag)
         pipe->urb_cnt++;
 
         spin_lock_irqsave(&pipe->urb_lock, lock_flag);
-        list_add(&urb_context->link, &pipe->urb_rx_list_head);
+        list_add(&urb_context->link, &pipe->urb_list_head);
 
         /*if(urb_context->urb) {
             usb_unanchor_urb(urb_context->urb);
@@ -427,21 +424,21 @@ static int usb_create_pipe(struct usb_infac_pipe * pipe, int dir, bool flag)
 
     if (dir) {
 #ifdef CONFIG_WORKQUEUE
-        INIT_WORK(&pipe->io_complete_work, usb_tx_comp_work);
-#endif
-#ifdef CONFIG_TASKLET
-        tasklet_init(&pipe->tx_tasklet, usb_tx_comp_tasklet, (unsigned long) pipe);
-#endif
-    } else {
-#ifdef CONFIG_WORKQUEUE
         INIT_WORK(&pipe->io_complete_work, usb_rx_comp_work);
 #endif
 #ifdef CONFIG_TASKLET
         tasklet_init(&pipe->rx_tasklet, usb_rx_comp_tasklet, (unsigned long) pipe);
 #endif
+    } else {
+#ifdef CONFIG_WORKQUEUE
+        INIT_WORK(&pipe->io_complete_work, usb_tx_comp_work);
+#endif
+#ifdef CONFIG_TASKLET
+        tasklet_init(&pipe->tx_tasklet, usb_tx_comp_tasklet, (unsigned long) pipe);
+#endif
     }
 
-    skb_queue_head_init(&pipe->io_complete_queue);
+    skb_queue_head_init(&pipe->io_skb_queue);
     return 0;
 }
 
@@ -461,14 +458,15 @@ static int usb_create_infac(struct usb_interface *interface, struct usb_infac_da
 
     for(i=0; i<iface_desc->desc.bNumEndpoints; i++) {
         endpoint = &iface_desc->endpoint[i].desc;
-        if(endpoint->bEndpointAddress & USB_DIR_MASK) {
+        printk("bEndpointAddress:0x%x, mask:0x%x \n", endpoint->bEndpointAddress, endpoint->bEndpointAddress & USB_ENDPOINT_DIR_MASK);
+        if(USB_DIR_IN == (endpoint->bEndpointAddress & USB_ENDPOINT_DIR_MASK)) {
             iface_data->pipe_rx.usb_pipe_handle = usb_rcvbulkpipe(dev, endpoint->bEndpointAddress);
             iface_data->pipe_rx.infac = iface_data;
-            usb_create_pipe(&iface_data->pipe_rx, USB_DIR_RX, flag);
+            usb_create_pipe(&iface_data->pipe_rx, USB_DIR_IN, flag);
         } else {
             iface_data->pipe_tx.usb_pipe_handle = usb_sndbulkpipe(dev, endpoint->bEndpointAddress);
             iface_data->pipe_tx.infac = iface_data;
-            usb_create_pipe(&iface_data->pipe_tx, USB_DIR_TX, flag);
+            usb_create_pipe(&iface_data->pipe_tx, USB_DIR_OUT, flag);
         }
     }
 
@@ -545,7 +543,6 @@ int usb_host_resume(struct usb_interface *intf)
     return 0;
 }
 
-//{USB_DEVICE(0x062a, 0x4106)}
 /* table of devices that work with this driver */
 static struct usb_device_id usb_host_ids[] = {
 	{USB_DEVICE(0x19d2, 0x0256)},
@@ -563,7 +560,7 @@ static struct usb_driver usb_host_driver = {
     .supports_autosuspend = true,
 };
 
-static int usb_test_init(void)
+static int usb_device_init(void)
 {
     int ret = 0;
     printk(DEBUG_FN_ENTRY_STR);
@@ -572,7 +569,7 @@ static int usb_test_init(void)
     return ret;
 }
 
-static void usb_test_exit(void)
+static void usb_device_exit(void)
 {
     printk(DEBUG_FN_ENTRY_STR);
 
@@ -580,8 +577,8 @@ static void usb_test_exit(void)
     return;
 }
 
-module_init(usb_test_init);
-module_exit(usb_test_exit);
+module_init(usb_device_init);
+module_exit(usb_device_exit);
 
-MODULE_AUTHOR("zhangpeng");
+MODULE_AUTHOR("Leon");
 MODULE_LICENSE("Dual BSD/GPL");

@@ -1,39 +1,31 @@
 USBTOSDIODIR = $(PWD)
 
-
 DRIVER_PATH := $(shell pwd)
-
 ARCH := arm
 export KERNELDIR=/lib/modules/$(shell uname -r)/build
 export KBUILDDIR=/lib/modules/$(shell uname -r)/build
-# include $(KDIR)/.config
-# include $(KERNELDIR)/.config
 
 CFG_WORKQUEUE=y
 CFG_TASKLET=n
 CFG_KTHREAD=n
 
-MOD_SRC = usb_test
+MOD_SRC = usb_device
 
 obj-m +=$(MOD_SRC).o
 $(MOD_SRC)-objs = \
 	usb_driver.o \
 
-
 ccflags-$(CFG_WORKQUEUE) += -DCONFIG_WORKQUEUE
 ccflags-$(CFG_TASKLET) += -DCONFIG_TASKLET
 ccflags-$(CFG_KTHREAD) += -DCONFIG_KTHREAD
-
 
 # ccflags-y += -Wall -Werror
 
 default: all
 
-
 all: modules
 
 modules:
-#	$(MAKE) -C $(KERNELDIR) CROSS_COMPILE=$(CROSS_COMPILE) ARCH=$(ARCH) O=$(KBUILDDIR) M=$(USBTOSDIODIR) $@
 	$(MAKE) -C $(KERNELDIR) O=$(KBUILDDIR) M=$(DRIVER_PATH) $@
 ins:
 	@sudo insmod $(MOD_SRC).ko

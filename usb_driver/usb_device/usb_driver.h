@@ -7,32 +7,29 @@
 #define URB_MAX_ITEM_SIZE   128
 #define USB_RX_MAX_BUF_SIZE 2048
 #define MAX_PACKET_SIZE 512
-#define USB_DIR_MASK	0x80
 #define USB_NUM_MASK    0x7F
 
 #define USB_DATA_URB_NUM 64
 #define USB_MSG_URB_NUM	16
 
-#define USB_DIR_RX		0
-#define USB_DIR_TX		1
+#define USB_ENDPOINT_DIR_MASK 0x80
+#define USB_DIR_IN      0x80
+#define USB_DIR_OUT     0
 
 struct usb_infac_pipe {
-	int dir;
 	u32 urb_cnt;
 	struct usb_infac_data_t *infac;
     spinlock_t urb_lock;
 	struct usb_anchor urb_submitted;
 	unsigned int usb_pipe_handle;
-	struct list_head urb_rx_list_head;
-    struct list_head skb_rx_head;
-    struct list_head skb_tx_head;
+	struct list_head urb_list_head;
 #ifdef CONFIG_WORKQUEUE
 	struct work_struct io_complete_work;
 #elif defined(CONFIG_TASKLET)
 	struct tasklet_struct tx_tasklet;
 	struct tasklet_struct rx_tasklet;
 #endif
-	struct sk_buff_head io_complete_queue;
+	struct sk_buff_head io_skb_queue;
 };
 
 struct usb_urb_context {
