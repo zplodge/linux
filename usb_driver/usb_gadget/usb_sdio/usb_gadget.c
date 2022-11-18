@@ -103,7 +103,7 @@ USB_GADGET_COMPOSITE_OPTIONS();
 
 /***  configuration description ***/
 static struct usb_configuration su_config_driver = {
-	.label = "eswin usb to sdio config",
+	.label = "usb config",
 	.bConfigurationValue = 1,
 	/* .iConfiguration = DYNAMIC */
 	/* .bmAttributes = USB_CONFIG_ATT_SELFPOWER, */
@@ -225,9 +225,9 @@ static struct usb_device_descriptor device_desc = {
 #define STRING_DESCRIPTION_IDX		USB_GADGET_FIRST_AVAIL_IDX
 
 static struct usb_string strings_dev[] = {
-	[USB_GADGET_MANUFACTURER_IDX].s = "ESWIN Co,Ltd.",
-	[USB_GADGET_PRODUCT_IDX].s = "ESWIn BootLoader",
-	[USB_GADGET_SERIAL_IDX].s = "eswin&usbBootloder",
+	[USB_GADGET_MANUFACTURER_IDX].s = "Leon",
+	[USB_GADGET_PRODUCT_IDX].s = "BootLoader",
+	[USB_GADGET_SERIAL_IDX].s = "usbBootloder",
 	[STRING_DESCRIPTION_IDX].s = NULL, 
 	{  } /* end of list */
 };
@@ -254,7 +254,6 @@ static void su_start_tx(struct usb_infac_dev * infac_dev)
 {
 	struct list_head *pool = &infac_dev->write_queue;
 	struct usb_ep *in = infac_dev->ep_in;
-	//printk("[su] entry %s\n", __func__);
 
 	while (!list_empty(pool)) {
 		struct usb_request	*req;
@@ -717,8 +716,8 @@ static void sdio_tx_work(struct work_struct *work)
 		if (restart == 1) {
 			int ack[] = {0x12, 0x34, 0x56, 0x78};
 			printk("usb tx ack:%d, read:%d, write:%d \n", sizeof(ack), infac_dev->read_allocated, infac_dev->write_allocated);
+			usb_xmit(p_su->usb_infac[0].ep_in, (void*)ack, sizeof(ack));
 			su_function_start(infac_dev);
-			//usb_xmit(p_su->usb_infac[0].ep_in, (void*)ack, sizeof(ack));
 		} else if (restart < 0){
 			printk("[su] entry %s, stop!\n", __func__);
 		}

@@ -45,6 +45,14 @@ struct usb_infac_data_t {
 
 	struct usb_infac_pipe pipe_rx;
 	struct usb_infac_pipe pipe_tx;
+
+	#ifdef CONFIG_KTHREAD
+	struct task_struct* usb_rx_thread;
+	struct task_struct* usb_tx_thread;
+
+	wait_queue_head_t rx_queue;
+	wait_queue_head_t tx_queue;
+	#endif
 };
 
 struct usb_host_priv{

@@ -32,20 +32,13 @@ static void core_register_work(struct work_struct *work)
 		tr->ops->xmit(tr, skb);
 	} if(tr->ops->write){
         struct sk_buff *skb;
-        struct sk_buff *skb1;
+
 	    skb = dev_alloc_skb(MAX_PACKET_SIZE);
         buff = (u8*)skb->data;
-        skb->len = MAX_PACKET_SIZE>>3;
-        memset(buff, 0x88, MAX_PACKET_SIZE>>3);
-	    printk(" write test\n");
-        tr->ops->xmit(tr, skb);
-
-	    skb1 = dev_alloc_skb(MAX_PACKET_SIZE);
-        buff = (u8*)skb1->data;
-        skb1->len = MAX_PACKET_SIZE>>4;
+        skb->len = MAX_PACKET_SIZE>>4;
 	    memset(buff, 0xaa, MAX_PACKET_SIZE>>4);
 	    //tr->ops->xmit(tr, skb);
-        tr->ops->write(tr, skb1->data, skb1->len);
+        tr->ops->write(tr, skb->data, skb->len);
 	} else {
         printk("eswin_sdio_work error, ops->xmit is null\n");
 	}
@@ -64,13 +57,17 @@ static void usb_transmit_complete(struct urb* urb)
         printk("%s:data:%p, len:%d, actual_length:%d \n", __func__, skb->data, skb->len, urb->actual_length);
         //print_hex_dump(KERN_DEBUG, "usb_transmit_complete: ", DUMP_PREFIX_NONE, 32, 1, skb->data, urb->actual_length, false);
         skb_queue_tail(&pipe->io_skb_queue, skb);
-
-#ifdef CONFIG_WORKQUEUE
-        schedule_work(&pipe->io_complete_work);
-#endif
     }
 
     free_urb_context(urb_context);
+
+#ifdef CONFIG_WORKQUEUE
+    schedule_work(&pipe->io_complete_work);
+#elif defined(CONFIG_TASKLET)
+    tasklet_schedule(&pipe->tx_tasklet);
+#elif defined(CONFIG_KTHREAD)
+    wake_up_interruptible(&pipe->infac->tx_queue);
+#endif
 }
 
 static int usb_host_init(struct usb_host_priv *tr)
@@ -82,7 +79,6 @@ static int usb_host_init(struct usb_host_priv *tr)
         tr->register_flag = true;
     }
 
-    //tr->ops->start(tr);
     schedule_delayed_work(&tr->register_work, msecs_to_jiffies(1000));
 
     return 0;
@@ -100,14 +96,18 @@ static void usb_recv_complete(struct urb* urb)
         print_hex_dump(KERN_DEBUG, "usb_recv_complete: ", DUMP_PREFIX_NONE, 32, 1, skb->data, urb->actual_length, false);
         skb->len = urb->actual_length;
         skb_queue_tail(&pipe->io_skb_queue, skb);
-
-#ifdef CONFIG_WORKQUEUE
-        schedule_work(&pipe->io_complete_work);
-#endif
     }
 
     free_urb_context(urb_context);
     usb_refill_rcv_transfer(pipe);
+
+#ifdef CONFIG_WORKQUEUE
+    schedule_work(&pipe->io_complete_work);
+#elif defined(CONFIG_TASKLET)
+    tasklet_schedule(&pipe->rx_tasklet);
+#elif defined(CONFIG_KTHREAD)
+    wake_up_interruptible(&pipe->infac->rx_queue);
+#endif
 }
 
 static int usb_init_rcv_transfer(struct usb_infac_pipe* pipe_rx)
@@ -291,6 +291,7 @@ static struct usb_ops usb_hif_ops = {
     .resume     = usb_hif_resume,
 };
 
+#ifdef CONFIG_WORKQUEUE
 static void usb_tx_comp_work(struct work_struct* com_work)
 {
     struct usb_infac_pipe* pipe = container_of(com_work, struct usb_infac_pipe, io_complete_work);
@@ -305,11 +306,6 @@ static void usb_tx_comp_work(struct work_struct* com_work)
     }
 }
 
-
-static void usb_tx_comp_tasklet(unsigned long data)
-{
-}
-
 static void usb_rx_comp_work(struct work_struct* com_work)
 {
     struct usb_infac_pipe* pipe = container_of(com_work, struct usb_infac_pipe, io_complete_work);
@@ -318,13 +314,70 @@ static void usb_rx_comp_work(struct work_struct* com_work)
     printk(DEBUG_FN_ENTRY_STR);
     while(skb = skb_dequeue(&pipe->io_skb_queue)) {
         printk("%s: skb_len:%d; \n", __func__, skb->len);
-        print_hex_dump(KERN_DEBUG, "usb_rx_comp_work: ", DUMP_PREFIX_NONE, 32, 1, skb->data, skb->len, false);;
+        print_hex_dump(KERN_DEBUG, "usb_rx_comp_work: ", DUMP_PREFIX_NONE, 32, 1, skb->data, skb->len, false);
+        kfree_skb(skb);
+    }
+}
+#endif
+
+#ifdef CONFIG_TASKLET
+static void usb_tx_comp_tasklet(unsigned long data)
+{
+    struct usb_infac_pipe* pipe = (struct usb_infac_pipe*)data;
+    struct sk_buff* skb = NULL;
+
+    while(skb = skb_dequeue(&pipe->io_skb_queue)) {
+        printk("%s: skb_len:%d", __func__, skb->len);
+        print_hex_dump(KERN_DEBUG, "usb_tx_comp_tasklet: ", DUMP_PREFIX_NONE, 32, 1, skb->data, skb->len, false);
     }
 }
 
 static void usb_rx_comp_tasklet(unsigned long data)
 {
+    struct sk_buff* skb = NULL;
+    struct usb_infac_pipe* pipe = (struct usb_infac_pipe*)data;
+
+    printk(DEBUG_FN_ENTRY_STR);
+    while(skb = skb_dequeue(&pipe->io_skb_queue)) {
+        printk("%s: skb_len:%d; \n", __func__, skb->len);
+        print_hex_dump(KERN_DEBUG, "usb_rx_comp_tasklet: ", DUMP_PREFIX_NONE, 32, 1, skb->data, skb->len, false);
+        kfree_skb(skb);
+    }
 }
+#endif
+
+#ifdef CONFIG_KTHREAD
+static int usb_rx_kthread_comp(void* data)
+{
+    while(!kthread_should_stop()) {
+        struct usb_infac_data_t* usb_iface = (struct usb_infac_data_t*)data;
+        struct sk_buff* skb;
+        while(skb = skb_dequeue(&usb_iface->pipe_rx.io_skb_queue)) {
+            printk("%s: skb_len:%d; \n", __func__, skb->len);
+            print_hex_dump(KERN_DEBUG, "usb_rx_thread_comp: ", DUMP_PREFIX_NONE, 32, 1, skb->data, skb->len, false);
+            kfree_skb(skb);
+        }
+    }
+
+    return 0;
+}
+
+static int usb_tx_kthread_comp(void* data)
+{
+    struct usb_infac_data_t* usb_iface = (struct usb_infac_data_t*)data;
+
+    while(!kthread_should_stop()) {
+        struct usb_infac_data_t* usb_iface = (struct usb_infac_data_t*)data;
+        struct sk_buff* skb;
+        while(skb = skb_dequeue(&usb_iface->pipe_tx.io_skb_queue)) {
+            printk("%s: skb_len:%d; \n", __func__, skb->len);
+            print_hex_dump(KERN_DEBUG, "usb_tx_thread_comp: ", DUMP_PREFIX_NONE, 32, 1, skb->data, skb->len, false);
+            kfree_skb(skb);
+        }
+    }
+    return 0;
+}
+#endif
 
 static void usb_free_urb_to_infac(struct usb_infac_pipe * pipe,
 					struct usb_urb_context *urb_context)
@@ -371,11 +424,11 @@ static void free_urb_context(struct usb_urb_context* urb_context)
     spin_lock_irqsave(&pipe->urb_lock, flag);
     list_add(&urb_context->link, &pipe->urb_list_head);
     usb_unanchor_urb(urb_context->urb);
-    urb_context->skb = NULL;
     pipe->urb_cnt++;
     if(urb_context->urb) {
         usb_unanchor_urb(urb_context->urb);
-        usb_free_urb(urb_context->urb);
+        urb_context->skb = NULL;
+        //usb_free_urb(urb_context->urb);
     }
     spin_unlock_irqrestore(&pipe->urb_lock, flag);
 }
@@ -438,7 +491,6 @@ static int usb_create_pipe(struct usb_infac_pipe * pipe, int dir, bool flag)
 #endif
     }
 
-    skb_queue_head_init(&pipe->io_skb_queue);
     return 0;
 }
 
@@ -484,7 +536,7 @@ static int usb_host_probe(struct usb_interface *interface, const struct usb_devi
 
     printk(DEBUG_FN_ENTRY_STR);
     printk("bInterfaceNumber:%d \n", iface_desc->desc.bInterfaceNumber);
-    //printk("driver info:match_flag:%d, vendor:%d, product:%d, class:%d, protocol:%d, subclass:%d, ifacenum:%d \n", id->match_flags, id->idVendor, id->idProduct, id->bDeviceClass, id->bDeviceProtocol, id->bDeviceSubClass, id->bInterfaceNumber);
+
     if(USB_INFAC_DATA == iface_desc->desc.bInterfaceNumber) {
         usb_host = kzalloc(sizeof(struct usb_host_priv), GFP_KERNEL);
 
@@ -498,14 +550,33 @@ static int usb_host_probe(struct usb_interface *interface, const struct usb_devi
         usb_host->ops = &usb_hif_ops;
         usb_set_intfdata(interface, usb_host);
         usb_create_infac(interface, &usb_host->usb_data, 0);
-        //usb_refill_rcv_transfer(&usb_host->usb_data.pipe_rx);
         usb_init_rcv_transfer(&usb_host->usb_data.pipe_rx);
     }else if(USB_INFAC_MSG == iface_desc->desc.bInterfaceNumber) {
         usb_create_infac(interface, &g_host_priv->usb_msg, 1);
-        //usb_init_rcv_transfer(&g_host_priv->usb_msg.pipe_rx);
         probe_flag = true;
     }
 
+    if(USB_INFAC_DATA ==iface_desc->desc.bInterfaceNumber) {
+        printk("creat kthread \n");
+
+        struct usb_infac_data_t* iface_data = &g_host_priv->usb_data;
+#ifdef CONFIG_KTHREAD
+        init_waitqueue_head(&iface_data->rx_queue);
+        init_waitqueue_head(&iface_data->tx_queue);
+        iface_data->usb_rx_thread = kthread_run(usb_rx_kthread_comp, iface_data, "%s", "usb_rx_thread");
+        iface_data->usb_tx_thread = kthread_run(usb_tx_kthread_comp, iface_data, "%s", "usb_tx_thread");
+    
+        if(IS_ERR_OR_NULL(iface_data->usb_rx_thread)) {
+            kthread_stop(iface_data->usb_rx_thread);
+            iface_data->usb_rx_thread = NULL;
+        }
+
+        if(IS_ERR_OR_NULL(iface_data->usb_tx_thread)) {
+            kthread_stop(iface_data->usb_tx_thread);
+            iface_data->usb_tx_thread = NULL;
+        }
+#endif
+    }
     if(probe_flag) {
         ret = usb_host_init(g_host_priv);
         
@@ -525,9 +596,13 @@ error:
 void usb_host_remove(struct usb_interface *interface)
 {
     printk(DEBUG_FN_ENTRY_STR);
-    kfree(g_host_priv);
     usb_set_intfdata(interface, NULL);
-	usb_put_dev(interface_to_usbdev(interface));
+    usb_put_dev(interface_to_usbdev(interface));
+#ifdef CONFIG_KTHREAD
+    kthread_stop(g_host_priv->kthread_rx);
+    kthread_stop(g_host_priv->kthread_rx);
+#endif
+    kfree(g_host_priv);
     return;
 }
 
