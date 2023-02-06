@@ -7,7 +7,10 @@
 #include <linux/kernel.h>
 #include <linux/list.h>
 #include <linux/usb.h>
+
 #include "usb_driver.h"
+#define CREATE_TRACE_POINTS
+#include "usb_trace.h"
 
 static struct usb_host_priv* g_host_priv = NULL;
 static void free_urb_context(struct usb_urb_context* urb_context);
@@ -59,6 +62,7 @@ static void usb_transmit_complete(struct urb* urb)
         skb_queue_tail(&pipe->io_skb_queue, skb);
     }
 
+    trace_usb_driver_tx(skb, pipe->usb_pipe_handle);
     free_urb_context(urb_context);
 
 #ifdef CONFIG_WORKQUEUE
@@ -152,6 +156,8 @@ static int usb_init_rcv_transfer(struct usb_infac_pipe* pipe_rx)
 
         urb_context = alloc_urb_context(pipe_rx);
     }
+
+    return 0;
 }
 
 static int usb_refill_rcv_transfer(struct usb_infac_pipe* pipe_rx)

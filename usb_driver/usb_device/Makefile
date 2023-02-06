@@ -1,5 +1,3 @@
-USBTOSDIODIR = $(PWD)
-
 DRIVER_PATH := $(shell pwd)
 ARCH := arm
 export KERNELDIR=/lib/modules/$(shell uname -r)/build
