@@ -1,7 +1,6 @@
 /*
-* usb gadget driver
+* usb gadget source header file
 */
-
 #include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/debugfs.h>
@@ -9,201 +8,24 @@
 #include <linux/module.h>
 #include <linux/skbuff.h>
 #include <linux/usb/composite.h>
+#include <linux/err.h>
+#include <linux/usb/cdc.h>
 
 #include "usb_gadget.h"
-
-static t_usb_sdio_dev su_dev;
-
-unsigned int need_size = 0;
-
-static struct dentry *p_debugfs_su;
-struct usb_request * su_alloc_req(struct usb_ep *ep, unsigned len, gfp_t kmalloc_flags);
-static int usb_xmit(struct usb_ep *ep_in, void *data, int len);
-
-static int debugfs_su_read(void *data, u64 *val)
-{
-	printk("[su] entry %s\n", __func__);
-	return 0;
-}
-
-static struct usb_request * req_tx;
-unsigned long speed_test_rx_pkt_cnt = 0;
-unsigned long speed_test_last_jiffies;
-
-static void usb_write_complete(struct usb_ep *ep, struct usb_request *req)
-{
-	struct usb_infac_dev *infac_dev = &su_dev.usb_infac[0];
-	usb_ep_queue(infac_dev->ep_in, req_tx, GFP_ATOMIC);
-
-			if ( speed_test_rx_pkt_cnt == 0) {
-				speed_test_last_jiffies = jiffies;
-			}
-
-			speed_test_rx_pkt_cnt ++;
-			if (time_after(jiffies, (speed_test_last_jiffies + msecs_to_jiffies(1000)))) {
-				unsigned long mbits;
-
-				mbits = (1514 * speed_test_rx_pkt_cnt) / 128 / 1024;	// 128 = 1024 / 8
-
-				pr_info("[wangc]usb tx throughput speed (%d Mbps), cnt (%d)\n", 
-					mbits, speed_test_rx_pkt_cnt);
-
-				//speed_test_last_jiffies = jiffies;
-				speed_test_rx_pkt_cnt = 0;
-			}
-	
-	
-	
-	//struct sk_buff	*skb = req->context;
-	//printk("[su] entry %s\n", __func__);
-	//dev_kfree_skb(skb);
-	//usb_ep_free_request(ep, req);
-}
-static int debugfs_su_write(void *data1, u64 val)
-{
-	int ret = 0;
-	struct usb_infac_dev *infac_dev = &su_dev.usb_infac[0];
-	unsigned len = (unsigned)val;
-	struct usb_request * req;
-
-	printk("[su] entry %s\n", __func__);
-
-	req = su_alloc_req(infac_dev->ep_in, len, GFP_ATOMIC);
-	req->length = len;
-	req->complete = usb_write_complete;
-	memset(req->buf, 0x23, len);
-	req->length = len;
-	
-	req_tx = req;
-	usb_ep_queue(infac_dev->ep_in, req, GFP_ATOMIC);
-
-	return ret;
-}
-
-DEFINE_SIMPLE_ATTRIBUTE(debugfs_su,
-			debugfs_su_read,
-			debugfs_su_write,
-			"%llu\n");
-
-void debugfs_su_init(void)
-{
-	pr_info("[su]%s\n", __func__);
-	p_debugfs_su = debugfs_create_file("sdio_usb", 0777, NULL, NULL, &debugfs_su);
-}
-
-void debugfs_su_exit(void)
-{
-	debugfs_remove(p_debugfs_su);
-}
-
-
-USB_GADGET_COMPOSITE_OPTIONS();
-
-// usb desc 
-
-/***  configuration description ***/
-static struct usb_configuration su_config_driver = {
-	.label = "usb config",
-	.bConfigurationValue = 1,
-	/* .iConfiguration = DYNAMIC */
-	/* .bmAttributes = USB_CONFIG_ATT_SELFPOWER, */
-	.MaxPower = 250,
-};
-
-
-/* interface descriptor: */
-
-static struct usb_interface_descriptor su_interface_desc = {
-	.bLength =		USB_DT_INTERFACE_SIZE,
-	.bDescriptorType =	USB_DT_INTERFACE,
-	/* .bInterfaceNumber = DYNAMIC */
-	.bNumEndpoints =	2,
-	.bInterfaceClass =	USB_CLASS_VENDOR_SPEC,
-	.bInterfaceSubClass =	0,
-	.bInterfaceProtocol =	0,
-	/* .iInterface = DYNAMIC */
-};
-
-/* full speed support: */
-
-static struct usb_endpoint_descriptor su_fs_in_desc = {
-	.bLength =		USB_DT_ENDPOINT_SIZE,
-	.bDescriptorType =	USB_DT_ENDPOINT,
-	.bEndpointAddress =	USB_DIR_IN,
-	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
-};
-
-static struct usb_endpoint_descriptor su_fs_out_desc = {
-	.bLength =		USB_DT_ENDPOINT_SIZE,
-	.bDescriptorType =	USB_DT_ENDPOINT,
-	.bEndpointAddress =	USB_DIR_OUT,
-	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
-};
-
-static struct usb_descriptor_header *su_fs_function[] = {
-	(struct usb_descriptor_header *) &su_interface_desc,
-	(struct usb_descriptor_header *) &su_fs_in_desc,
-	(struct usb_descriptor_header *) &su_fs_out_desc,
-	NULL,
-};
-
-/* high speed support: */
-
-static struct usb_endpoint_descriptor su_hs_in_desc = {
-	.bLength =		USB_DT_ENDPOINT_SIZE,
-	.bDescriptorType =	USB_DT_ENDPOINT,
-	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
-	.wMaxPacketSize =	cpu_to_le16(512),
-};
-
-static struct usb_endpoint_descriptor su_hs_out_desc = {
-	.bLength =		USB_DT_ENDPOINT_SIZE,
-	.bDescriptorType =	USB_DT_ENDPOINT,
-	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
-	.wMaxPacketSize =	cpu_to_le16(512),
-};
-
-static struct usb_descriptor_header *su_hs_function[] = {
-	(struct usb_descriptor_header *) &su_interface_desc,
-	(struct usb_descriptor_header *) &su_hs_in_desc,
-	(struct usb_descriptor_header *) &su_hs_out_desc,
-	NULL,
-};
-
-static struct usb_endpoint_descriptor su_ss_in_desc = {
-	.bLength =		USB_DT_ENDPOINT_SIZE,
-	.bDescriptorType =	USB_DT_ENDPOINT,
-	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
-	.wMaxPacketSize =	cpu_to_le16(1024),
-};
-
-static struct usb_endpoint_descriptor su_ss_out_desc = {
-	.bLength =		USB_DT_ENDPOINT_SIZE,
-	.bDescriptorType =	USB_DT_ENDPOINT,
-	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
-	.wMaxPacketSize =	cpu_to_le16(1024),
-};
-
-static struct usb_ss_ep_comp_descriptor su_ss_bulk_comp_desc = {
-	.bLength =              sizeof su_ss_bulk_comp_desc,
-	.bDescriptorType =      USB_DT_SS_ENDPOINT_COMP,
-};
-
-static struct usb_descriptor_header *su_ss_function[] = {
-	(struct usb_descriptor_header *) &su_interface_desc,
-	(struct usb_descriptor_header *) &su_ss_in_desc,
-	(struct usb_descriptor_header *) &su_ss_bulk_comp_desc,
-	(struct usb_descriptor_header *) &su_ss_out_desc,
-	(struct usb_descriptor_header *) &su_ss_bulk_comp_desc,
-	NULL,
-};
-
-
 
 /***  device description ***/
 #define SU_VENDOR_ID		0x19d2
 #define SU_PRODUCT_ID		0x0256
 #define SU_BCD_DEVICE		0x7510
+
+struct usb_gadget_dev_t usb_gadget_dev;
+USB_GADGET_COMPOSITE_OPTIONS();
+
+static struct usb_configuration usb_gadget_config_driver = {
+    .label = "usb_config",
+    .bConfigurationValue = 1,
+    .MaxPower = 250,
+};
 
 static struct usb_device_descriptor device_desc = {
 	.bLength =		USB_DT_DEVICE_SIZE,
@@ -216,8 +38,6 @@ static struct usb_device_descriptor device_desc = {
 	.idVendor = cpu_to_le16(SU_VENDOR_ID),
 	.idProduct = cpu_to_le16(SU_PRODUCT_ID),
 	.bcdDevice = cpu_to_le16(SU_BCD_DEVICE),
-	/* .iManufacturer = DYNAMIC */
-	/* .iProduct = DYNAMIC */
 	.bNumConfigurations =	1,
 };
 
@@ -242,65 +62,296 @@ static struct usb_gadget_strings *dev_strings[] = {
 	NULL,
 };
 
-#define QUEUE_SIZE		16//128
-#define ITEM_BUF_SIZE		2048
 
-static inline struct usb_infac_dev *func_to_su(struct usb_function *f)
+/* interface and class descriptors: */
+static struct usb_interface_descriptor usb_data_interface_desc = {
+	.bLength =		USB_DT_INTERFACE_SIZE,
+	.bDescriptorType =	USB_DT_INTERFACE,
+	/* .bInterfaceNumber = DYNAMIC */
+	.bNumEndpoints =	2,
+	.bInterfaceClass =	USB_CLASS_VENDOR_SPEC, //USB_CLASS_CDC_DATA,
+	.bInterfaceSubClass =	0,
+	.bInterfaceProtocol =	0,
+	/* .iInterface = DYNAMIC */
+};
+
+#if 0
+static struct usb_cdc_header_desc usb_header_desc = {
+	.bLength =		sizeof(usb_header_desc),
+	.bDescriptorType =	USB_DT_CS_INTERFACE,
+	.bDescriptorSubType =	USB_CDC_HEADER_TYPE,
+	.bcdCDC =		cpu_to_le16(0x0110),
+};
+
+static struct usb_cdc_call_mgmt_descriptor usb_call_mgmt_descriptor = {
+	.bLength =		sizeof(usb_call_mgmt_descriptor),
+	.bDescriptorType =	USB_DT_CS_INTERFACE,
+	.bDescriptorSubType =	USB_CDC_CALL_MANAGEMENT_TYPE,
+	.bmCapabilities =	0,
+	/* .bDataInterface = DYNAMIC */
+};
+
+static struct usb_cdc_union_desc usb_union_desc = {
+	.bLength =		sizeof(usb_union_desc),
+	.bDescriptorType =	USB_DT_CS_INTERFACE,
+	.bDescriptorSubType =	USB_CDC_UNION_TYPE,
+	/* .bMasterInterface0 =	DYNAMIC */
+	/* .bSlaveInterface0 =	DYNAMIC */
+};
+
+
+/* full speed support: */
+static struct usb_endpoint_descriptor usb_fs_notify_desc = {
+	.bLength =		USB_DT_ENDPOINT_SIZE,
+	.bDescriptorType =	USB_DT_ENDPOINT,
+	.bEndpointAddress =	USB_DIR_IN,
+	.bmAttributes =		USB_ENDPOINT_XFER_INT,
+	.wMaxPacketSize =	cpu_to_le16(HS_NOTIFY_MAXPACKET),
+	.bInterval =		GS_NOTIFY_INTERVAL_MS,
+};
+#endif
+
+static struct usb_endpoint_descriptor usb_fs_in_desc = {
+	.bLength =		USB_DT_ENDPOINT_SIZE,
+	.bDescriptorType =	USB_DT_ENDPOINT,
+	.bEndpointAddress =	USB_DIR_IN,
+	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
+};
+
+static struct usb_endpoint_descriptor usb_fs_out_desc = {
+	.bLength =		USB_DT_ENDPOINT_SIZE,
+	.bDescriptorType =	USB_DT_ENDPOINT,
+	.bEndpointAddress =	USB_DIR_OUT,
+	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
+};
+
+static struct usb_descriptor_header *usb_fs_function[] = {
+	//(struct usb_descriptor_header *) &usb_header_desc,
+	//(struct usb_descriptor_header *) &usb_call_mgmt_descriptor,
+	//(struct usb_descriptor_header *) &usb_union_desc,
+	//(struct usb_descriptor_header *) &usb_fs_notify_desc,
+	(struct usb_descriptor_header *) &usb_data_interface_desc,
+	(struct usb_descriptor_header *) &usb_fs_in_desc,
+	(struct usb_descriptor_header *) &usb_fs_out_desc,
+	NULL,
+};
+
+/* high speed support: */
+static struct usb_endpoint_descriptor usb_hs_notify_desc = {
+	.bLength =		USB_DT_ENDPOINT_SIZE,
+	.bDescriptorType =	USB_DT_ENDPOINT,
+	.bEndpointAddress =	USB_DIR_IN,
+	.bmAttributes =		USB_ENDPOINT_XFER_INT,
+	.wMaxPacketSize =	cpu_to_le16(HS_NOTIFY_MAXPACKET),
+	.bInterval =		USB_MS_TO_HS_INTERVAL(GS_NOTIFY_INTERVAL_MS),
+};
+
+static struct usb_endpoint_descriptor usb_hs_in_desc = {
+	.bLength =		USB_DT_ENDPOINT_SIZE,
+	.bDescriptorType =	USB_DT_ENDPOINT,
+	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
+	.wMaxPacketSize =	cpu_to_le16(512),
+};
+
+static struct usb_endpoint_descriptor usb_hs_out_desc = {
+	.bLength =		USB_DT_ENDPOINT_SIZE,
+	.bDescriptorType =	USB_DT_ENDPOINT,
+	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
+	.wMaxPacketSize =	cpu_to_le16(512),
+};
+
+static struct usb_descriptor_header *usb_hs_function[] = {
+	//(struct usb_descriptor_header *) &usb_header_desc,
+	//(struct usb_descriptor_header *) &usb_call_mgmt_descriptor,
+	//(struct usb_descriptor_header *) &usb_union_desc,
+	//(struct usb_descriptor_header *) &usb_hs_notify_desc,
+	(struct usb_descriptor_header *) &usb_data_interface_desc,
+	(struct usb_descriptor_header *) &usb_hs_in_desc,
+	(struct usb_descriptor_header *) &usb_hs_out_desc,
+	NULL,
+};
+
+static struct usb_endpoint_descriptor usb_ss_in_desc = {
+	.bLength =		USB_DT_ENDPOINT_SIZE,
+	.bDescriptorType =	USB_DT_ENDPOINT,
+	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
+	.wMaxPacketSize =	cpu_to_le16(1024),
+};
+
+static struct usb_endpoint_descriptor usb_ss_out_desc = {
+	.bLength =		USB_DT_ENDPOINT_SIZE,
+	.bDescriptorType =	USB_DT_ENDPOINT,
+	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
+	.wMaxPacketSize =	cpu_to_le16(1024),
+};
+
+static struct usb_ss_ep_comp_descriptor usb_ss_bulk_comp_desc = {
+	.bLength =              sizeof(usb_ss_bulk_comp_desc),
+	.bDescriptorType =      USB_DT_SS_ENDPOINT_COMP,
+};
+
+static struct usb_descriptor_header *usb_ss_function[] = {
+	//(struct usb_descriptor_header *) &usb_header_desc,
+	//(struct usb_descriptor_header *) &usb_call_mgmt_descriptor,
+	//(struct usb_descriptor_header *) &usb_union_desc,
+	//(struct usb_descriptor_header *) &usb_hs_notify_desc,
+	(struct usb_descriptor_header *) &usb_ss_bulk_comp_desc,
+	(struct usb_descriptor_header *) &usb_data_interface_desc,
+	(struct usb_descriptor_header *) &usb_ss_in_desc,
+	(struct usb_descriptor_header *) &usb_ss_bulk_comp_desc,
+	(struct usb_descriptor_header *) &usb_ss_out_desc,
+	(struct usb_descriptor_header *) &usb_ss_bulk_comp_desc,
+	NULL,
+};
+
+static inline struct usb_infac_dev *func_to_dev(struct usb_function *f)
 {
-	return container_of(f, struct usb_infac_dev, function);
+	return container_of(f, struct usb_infac_dev, func);
 }
 
-static void su_start_tx(struct usb_infac_dev * infac_dev)
+struct usb_request *hs_alloc_req(struct usb_ep *ep, unsigned len, gfp_t kmalloc_flags)
 {
-	struct list_head *pool = &infac_dev->write_queue;
-	struct usb_ep *in = infac_dev->ep_in;
+	struct usb_request *req;
 
-	while (!list_empty(pool)) {
-		struct usb_request	*req;
-		int			status;
+	req = usb_ep_alloc_request(ep, kmalloc_flags);
 
-		req = list_entry(pool->next, struct usb_request, list);
-
-		list_del(&req->list);
-
-		spin_unlock(&infac_dev->lock);
-		status = usb_ep_queue(in, req, GFP_ATOMIC);
-		spin_lock(&infac_dev->lock);
-
-		if (status) {
-			pr_debug("%s: %s %s err %d\n",
-					__func__, "queue", in->name, status);
-			list_add(&req->list, &infac_dev->write_pool);
-			break;
+	if (req != NULL) {
+		req->length = len;
+		req->buf = kmalloc(len, kmalloc_flags);
+		if (req->buf == NULL) {
+			usb_ep_free_request(ep, req);
+			return NULL;
 		}
+	}
+
+	return req;
+}
+
+static int hs_alloc_requests(struct usb_ep *ep, struct list_head *head, \
+    void (*fn)(struct usb_ep *, struct usb_request *), int *allocated)
+{
+	int			i;
+	struct usb_request	*req;
+	int n = allocated ? QUEUE_SIZE - *allocated : QUEUE_SIZE;
+
+	/* Pre-allocate up to QUEUE_SIZE transfers, but if we can't
+	 * do quite that many this time, don't fail ... we just won't
+	 * be as speedy as we might otherwise be.
+	 */
+	for (i = 0; i < n; i++) {
+		req = hs_alloc_req(ep, ep->maxpacket, GFP_ATOMIC);
+		if (!req)
+			return list_empty(head) ? -ENOMEM : 0;
+		req->complete = fn;
+		list_add_tail(&req->list, head);
+		if (allocated)
+			(*allocated)++;
+	}
+	return 0;
+}
+
+
+static void hs_free_requests(struct usb_ep *ep, struct list_head *head, int *allocated)
+{
+	struct usb_request	*req;
+
+	while (!list_empty(head)) {
+		req = list_entry(head->next, struct usb_request, list);
+		list_del(&req->list);
+		kfree(req->buf);
+	    usb_ep_free_request(ep, req);
+		if (allocated)
+			(*allocated)--;
 	}
 }
 
-static unsigned su_start_rx(struct usb_infac_dev * infac_dev)
+static void hs_rx_push(struct work_struct *work)
 {
-	struct list_head *pool = &infac_dev->read_pool;
-	struct usb_ep *out = infac_dev->ep_out;
-	//printk("[su] entry %s\n", __func__);
+    struct delayed_work	*w = to_delayed_work(work);
+    struct usb_infac_dev *infac_dev = container_of(w, struct usb_infac_dev, push);
+    struct list_head *queue = &infac_dev->read_queue;
+    bool restart = true;
+    printk(DEBUG_FN_ENTRY_STR);
 
-	while (!list_empty(pool)) {
+    spin_lock_irq(&infac_dev->dev_lock);
+
+    while(!list_empty(queue)) {
 		struct usb_request	*req;
-		int			status;
+
+		req = list_first_entry(queue, struct usb_request, list);
+
+		switch (req->status) {
+		case -ESHUTDOWN:
+			restart = false;
+			pr_debug("hs_rx_push: shutdown\n");
+			break;
+
+		default:
+			/* presumably a transient fault */
+			pr_warn("hs_rx_push: unexpected RX status %d\n", req->status);
+			fallthrough;
+		case 0:
+			/* normal completion */
+            printk("usb rx length:%d \n", req->length);
+            print_hex_dump(KERN_DEBUG, "usb_rx: ", DUMP_PREFIX_NONE, 32, 1, req->buf, req->length, false);
+			break;
+		}
+
+		list_move(&req->list, &infac_dev->read_pool);
+		infac_dev->read_started--;
+	}
+
+    if(restart > 0) {
+        restart = 1;
+    }
+
+	spin_unlock_irq(&infac_dev->dev_lock);
+
+	if (restart == 1) {
+			int ack[] = {0x12, 0x34, 0x56, 0x78};
+			printk("usb tx ack:%d, read:%d, write:%d \n", sizeof(ack), infac_dev->read_allocated, infac_dev->write_allocated);
+			//usb_xmit(infac_dev->ep_in, (void*)ack, sizeof(ack));
+			//su_function_start(infac_dev);
+		} else {
+			printk("[su] entry %s, stop!\n", __func__);
+		}
+}
+
+static void hs_read_complete(struct usb_ep *ep, struct usb_request *req)
+{
+	struct usb_infac_dev *infac_dev = ep->driver_data;
+    printk(DEBUG_FN_ENTRY_STR);
+
+	/* Queue all received data until the tty layer is ready for it. */
+	spin_lock(&infac_dev->dev_lock);
+	list_add_tail(&req->list, &infac_dev->read_queue);
+	schedule_delayed_work(&infac_dev->push, 0);
+	spin_unlock(&infac_dev->dev_lock);
+}
+
+static int hs_start_rx(struct usb_infac_dev *infac_dev)
+{
+    struct list_head* pool = &infac_dev->read_pool;
+    struct usb_ep *out = infac_dev->ep_out;
+    int status = 0;
+    printk(DEBUG_FN_ENTRY_STR);
+
+    while(!list_empty(pool)) {
+		struct usb_request *req;
 
 		if (infac_dev->read_started >= QUEUE_SIZE)
 			break;
 
 		req = list_entry(pool->next, struct usb_request, list);
-
 		list_del(&req->list);
-
-		req->length = ITEM_BUF_SIZE;
+		req->length = out->maxpacket;
 
 		/* drop lock while we call out; the controller driver
 		 * may need to call us back (e.g. for disconnect)
 		 */
-		spin_unlock(&infac_dev->lock);
+		spin_unlock(&infac_dev->dev_lock);
 		status = usb_ep_queue(out, req, GFP_ATOMIC);
-		spin_lock(&infac_dev->lock);
+		spin_lock(&infac_dev->dev_lock);
 
 		if (status) {
 			pr_debug("%s: %s %s err %d\n",
@@ -311,492 +362,326 @@ static unsigned su_start_rx(struct usb_infac_dev * infac_dev)
 		infac_dev->read_started++;
 	}
 
-	return infac_dev->read_started;
+	return status;
 }
 
-
-
-
-struct usb_request *
-su_alloc_req(struct usb_ep *ep, unsigned len, gfp_t kmalloc_flags)
+static int hs_start_tx(struct usb_infac_dev *infac_dev)
 {
-	struct usb_request *req;
-	struct sk_buff	*skb;
+	struct list_head *pool = &infac_dev->write_pool;
+	struct usb_ep *in = infac_dev->ep_in;
+	int status = 0;
 
-	skb = dev_alloc_skb(len);
-	if (!skb) {
-		printk("[su] entry %s, no skb!\n", __func__);
-		return NULL;
+    printk(DEBUG_FN_ENTRY_STR);
+
+	while (!infac_dev->write_busy && !list_empty(pool)) {
+		struct usb_request	*req;
+
+		if (infac_dev->write_started >= QUEUE_SIZE)
+			break;
+
+		req = list_entry(pool->next, struct usb_request, list);
+		
+
+		infac_dev->write_busy = true;
+		spin_unlock(&infac_dev->dev_lock);
+		status = usb_ep_queue(in, req, GFP_ATOMIC);
+		spin_lock(&infac_dev->dev_lock);
+		infac_dev->write_busy = false;
+
+		if (status) {
+			pr_debug("%s: %s %s err %d\n",
+					__func__, "queue", in->name, status);
+			list_add(&req->list, pool);
+			break;
+		}
+
+		infac_dev->write_started++;
 	}
 
-	req = usb_ep_alloc_request(ep, kmalloc_flags);
-	if (req != NULL) {
-		req->length = len;
-		req->buf = skb->data;
-		req->context = skb; 
-	} else {
-		printk("[su] entry %s, no req!\n", __func__);
-		dev_kfree_skb(skb);
-	}
-
-	return req;
+	return status;
 }
 
-static void su_write_complete(struct usb_ep *ep, struct usb_request *req)
+static void hs_write_complete(struct usb_ep *ep, struct usb_request *req)
 {
 	struct usb_infac_dev *infac_dev = ep->driver_data;
+    printk(DEBUG_FN_ENTRY_STR);
 
-	//printk("[su] entry %s\n", __func__);
+	spin_lock(&infac_dev->dev_lock);
+	list_add(&req->list, &infac_dev->write_pool);
+	infac_dev->write_started--;
 
-	spin_lock(&infac_dev->lock);
-	list_add_tail(&req->list, &infac_dev->write_pool);
-	spin_unlock(&infac_dev->lock);
-}
+	switch (req->status) {
+	default:
+		/* presumably a transient fault */
+		pr_warn("%s: unexpected status %d\n", __func__, req->status);
+		fallthrough;
+	case 0:
+		/* normal completion */
+		hs_start_tx(infac_dev);
+		break;
 
-
-static void su_read_complete(struct usb_ep *ep, struct usb_request *req)
-{
-	struct usb_infac_dev *infac_dev = ep->driver_data;
-
-	//printk("[su] entry %s\n", __func__);
-
-	spin_lock(&infac_dev->lock);
-	list_add_tail(&req->list, &infac_dev->read_queue);
-	queue_work(su_dev.workqueue, &su_dev.work);
-	spin_unlock(&infac_dev->lock);
-	
-	//if(req->actual > 500)
-	//	print_hex_dump(KERN_INFO, "READ:", DUMP_PREFIX_ADDRESS, 32, 1,
-	//		       req->buf, req->actual, false);
-}
-
-
-static void su_function_free_req_all(struct usb_ep *ep, struct list_head *head,
-							 int *allocated)
-{
-	struct usb_request	*req;
-
-	printk("[su] entry %s\n", __func__);
-	while (!list_empty(head)) {
-		req = list_entry(head->next, struct usb_request, list);
-		list_del(&req->list);
-		dev_kfree_skb(req->context);
-		usb_ep_free_request(ep, req);
-		if (allocated)
-			(*allocated)--;
-	}
-}
-
-
-
-static int su_function_alloc_req_all(struct usb_ep *ep, struct list_head *head,
-		void (*fn)(struct usb_ep *, struct usb_request *),
-		int *allocated)
-{
-	int			i;
-	struct usb_request	*req;
-	int n = allocated ? QUEUE_SIZE - *allocated : QUEUE_SIZE;
-
-	//printk("[su] entry %s\n", __func__);
-	/* Pre-allocate up to QUEUE_SIZE transfers, but if we can't
-	 * do quite that many this time, don't fail ... we just won't
-	 * be as speedy as we might otherwise be.
-	 */
-	for (i = 0; i < n; i++) {
-		req = su_alloc_req(ep, ITEM_BUF_SIZE, GFP_ATOMIC);
-		if (!req) {
-			printk("[su] entry %s: nomem!\n", __func__);
-			return list_empty(head) ? -ENOMEM : 0;
-		}
-		req->complete = fn;
-		list_add_tail(&req->list, head);
-		if (allocated)
-			(*allocated)++;
-	}
-	return 0;
-}
-
-
-
-static int su_function_start(struct usb_infac_dev * infac_dev)
-{
-	struct list_head *head = &infac_dev->read_pool;
-	struct usb_ep *ep = infac_dev->ep_out;
-	int ret;
-	unsigned started;
-
-	if (infac_dev->read_allocated == 0) {
-		//printk("[su] entry %s, id: %d\n", __func__, infac_dev->id);
-		ret = su_function_alloc_req_all(ep, head, su_read_complete,
-			&infac_dev->read_allocated);
-		if (ret)
-			return ret;
+	case -ESHUTDOWN:
+		/* disconnect */
+		pr_debug("%s: shutdown\n", __func__);
+		break;
 	}
 
-	if (infac_dev->write_allocated == 0) {
-		ret = su_function_alloc_req_all(infac_dev->ep_in, &infac_dev->write_pool,
-			su_write_complete, &infac_dev->write_allocated);
-		if (ret) {
-			su_function_free_req_all(ep, head, &infac_dev->read_allocated);
-			return ret;
-		}
-	}
-
-	started = su_start_rx(infac_dev);
-
-	if (!started) {
-		su_function_free_req_all(ep, head, &infac_dev->read_allocated);
-		su_function_free_req_all(infac_dev->ep_in, &infac_dev->write_pool, 
-			&infac_dev->write_allocated);
-		ret = -EIO;
-	}
-	su_start_tx(infac_dev);
-	return ret;
+	spin_unlock(&infac_dev->dev_lock);
 }
 
-// ---------------------------------------------------------------------------
-
-static int su_function_bind(struct usb_configuration *c, struct usb_function *f)
+static int usb_gadget_function_start(struct usb_infac_dev *infac_dev)
 {
-	struct usb_composite_dev *cdev = c->cdev;
-	struct usb_infac_dev	*infac_dev = func_to_su(f);
-	int			status;
-	struct usb_ep		*ep;
+    int status;
+    unsigned started;
+    struct list_head *head = &infac_dev->read_pool;
 
-	printk("[su] entry %s\n", __func__);
+    printk(DEBUG_FN_ENTRY_STR);
 
-	/* allocate instance-specific interface IDs */
-	status = usb_interface_id(c, f);
-	if (status < 0)
-		goto fail;
-	infac_dev->id = status;
-	su_interface_desc.bInterfaceNumber = status;
+    if(!infac_dev->read_allocated) {
+        status = hs_alloc_requests(infac_dev->ep_in, &infac_dev->read_pool, hs_read_complete, &infac_dev->read_allocated);
 
-	status = -ENODEV;
+        if(status) {
+            return status;
+        }
+    }
 
-	/* allocate instance-specific endpoints */
-	ep = usb_ep_autoconfig(cdev->gadget, &su_fs_in_desc);
+    if(!infac_dev->write_allocated) {
+        status = hs_alloc_requests(infac_dev->ep_out, &infac_dev->write_pool, hs_write_complete, &infac_dev->write_allocated);
+
+        if(status) {
+            hs_free_requests(infac_dev->ep_in, head, &infac_dev->read_allocated);
+            return status;
+        }
+    }
+
+    started = hs_start_rx(infac_dev);
+
+    if(!started) {
+        printk("hs rx start fail; \n");
+        hs_free_requests(infac_dev->ep_in, &infac_dev->read_pool, &infac_dev->read_allocated);
+        hs_free_requests(infac_dev->ep_out, &infac_dev->write_pool, &infac_dev->write_allocated);
+        status = -EIO;
+    }else {
+        hs_start_tx(infac_dev);
+    }
+
+    return status;
+}
+
+static int usb_func_bind(struct usb_configuration *c, struct usb_function *f)
+{
+    struct usb_composite_dev *cdev = c->cdev;
+    struct usb_infac_dev	*infac_dev = func_to_dev(f);
+    int			status;
+    struct usb_ep		*ep;
+
+
+    printk(DEBUG_FN_ENTRY_STR);
+    /* allocate instance-specific interface IDs, and patch descriptors */
+    status = usb_interface_id(c, f);
+    printk("usb_interface_id status:%d \n", status);
+    if (status < 0)
+        goto fail;
+
+    infac_dev->id = status;
+    usb_data_interface_desc.bInterfaceNumber = status;
+    status = -ENODEV;
+
+    /* allocate instance-specific endpoints */
+	ep = usb_ep_autoconfig(cdev->gadget, &usb_fs_in_desc);
 	if (!ep)
 		goto fail;
+
 	infac_dev->ep_in = ep;
 
-	ep = usb_ep_autoconfig(cdev->gadget, &su_fs_out_desc);
+	ep = usb_ep_autoconfig(cdev->gadget, &usb_fs_out_desc);
 	if (!ep)
 		goto fail;
+
 	infac_dev->ep_out = ep;
 
 	/* support all relevant hardware speeds... we expect that when
 	 * hardware is dual speed, all bulk-capable endpoints work at
 	 * both speeds
 	 */
-	su_hs_in_desc.bEndpointAddress = su_fs_in_desc.bEndpointAddress;
-	su_hs_out_desc.bEndpointAddress = su_fs_out_desc.bEndpointAddress;
+	usb_hs_in_desc.bEndpointAddress = usb_fs_in_desc.bEndpointAddress;
+	usb_hs_out_desc.bEndpointAddress = usb_fs_out_desc.bEndpointAddress;
 
-	su_ss_in_desc.bEndpointAddress = su_fs_in_desc.bEndpointAddress;
-	su_ss_out_desc.bEndpointAddress = su_fs_out_desc.bEndpointAddress;
+	usb_ss_in_desc.bEndpointAddress = usb_fs_in_desc.bEndpointAddress;
+	usb_ss_out_desc.bEndpointAddress = usb_fs_out_desc.bEndpointAddress;
 
-	status = usb_assign_descriptors(f, su_fs_function, su_hs_function,
-			su_ss_function, NULL);
+	status = usb_assign_descriptors(f, usb_fs_function, usb_hs_function, usb_ss_function, usb_ss_function);
+	//status = usb_assign_descriptors(f, usb_fs_function, usb_hs_function, usb_ss_function, NULL);
+
 	if (status)
-		goto fail;
+		return status;
 
 	return 0;
+fail:
+    printk("usb func bind error! \n");
+    return status;
+
+}
+
+static int usb_func_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
+{
+    unsigned long   flags;
+    struct usb_infac_dev *infac_dev = func_to_dev(f);
+    struct usb_composite_dev *cdev = f->config->cdev;
+
+    printk(DEBUG_FN_ENTRY_STR);
+
+    if (!infac_dev->ep_in->desc || !infac_dev->ep_out->desc) {
+        printk("init usb gadget;\n");
+        if (config_ep_by_speed(cdev->gadget, f,
+                       infac_dev->ep_in) ||
+            config_ep_by_speed(cdev->gadget, f,
+                       infac_dev->ep_out)) {
+            infac_dev->ep_in->desc = NULL;
+            infac_dev->ep_out->desc = NULL;
+            goto fail;
+        }
+    }
+
+    usb_ep_enable(infac_dev->ep_in);
+    usb_ep_enable(infac_dev->ep_out);
+
+    infac_dev->ep_in->driver_data = infac_dev;
+    infac_dev->ep_out->driver_data = infac_dev;
+
+    spin_lock_irqsave(&infac_dev->dev_lock, flags);
+    usb_gadget_function_start(infac_dev);
+    spin_unlock_irqrestore(&infac_dev->dev_lock, flags);
+    return 0;
 
 fail:
-	ERROR(cdev, "%s: can't bind, err %d\n", f->name, status);
-
-	return status;
+    return -EINVAL;
 }
 
-
-static void su_function_unbind(struct usb_configuration *c, struct usb_function *f)
+static void usb_func_unbind(struct usb_configuration *c, struct usb_function *f)
 {
-	usb_free_all_descriptors(f);
+    printk(DEBUG_FN_ENTRY_STR);
+    usb_free_all_descriptors(f);
 }
 
-
-static int su_function_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
+static void usb_func_disable(struct usb_function *f)
 {
-	struct usb_infac_dev *infac_dev = func_to_su(f);
-	struct usb_composite_dev *cdev = f->config->cdev;
-	int ret;
-	unsigned long flags;
+    struct usb_infac_dev	*infac_dev = func_to_dev(f);
+    printk(DEBUG_FN_ENTRY_STR);
+    usb_ep_disable(infac_dev->ep_in);
+    usb_ep_disable(infac_dev->ep_out);
+    cancel_delayed_work_sync(&infac_dev->push);
+}
 
-	printk("[su] entry %s,  intf: %d alt: %d\n", __func__, intf, alt);
-	DBG(cdev, "su_function_set_alt intf: %d alt: %d\n", intf, alt);
+static int usb_register_ports(struct usb_composite_dev *cdev, struct usb_configuration* conf)
+{
+    int status = 0, i;
+    struct usb_infac_dev* infac_dev;
 
-	if (!infac_dev->ep_in->desc || !infac_dev->ep_out->desc) {
-		dev_dbg(&cdev->gadget->dev,
-			"activate generic infac-su%d\n", infac_dev->id);
-		if (config_ep_by_speed(cdev->gadget, f, infac_dev->ep_in) ||
-		    config_ep_by_speed(cdev->gadget, f, infac_dev->ep_out)) {
-			infac_dev->ep_in->desc = NULL;
-			infac_dev->ep_out->desc = NULL;
-			return -EINVAL;
-		}
-	}
+    printk(DEBUG_FN_ENTRY_STR);
+    status = usb_add_config_only(cdev, conf);
+    if(status)
+        return status;
 
-	ret = usb_ep_enable(infac_dev->ep_in);
-	if (ret)
-		return ret;
-	infac_dev->ep_in->driver_data = infac_dev;
+    printk("%s: cdev:%p, conf->cdev:%p \n", __func__, cdev, conf->cdev);
+    for(i=0; i<USB_INTERFACE_NUM; i++) {
+        infac_dev = &usb_gadget_dev.infac_dev[i];
+        infac_dev->cdev = conf->cdev;
+        infac_dev->func.name = i?"hs1":"hs0";
+        infac_dev->func.bind = usb_func_bind;
+        infac_dev->func.set_alt = usb_func_set_alt;
+        infac_dev->func.unbind = usb_func_unbind;
+        infac_dev->func.disable = usb_func_disable;
 
-	ret = usb_ep_enable(infac_dev->ep_out);
-	if (ret) {
-		usb_ep_disable(infac_dev->ep_in);
-		return ret;
-	}
-	infac_dev->ep_out->driver_data = infac_dev;
+        spin_lock_init(&infac_dev->dev_lock);
+        INIT_LIST_HEAD(&infac_dev->read_pool);
+        INIT_LIST_HEAD(&infac_dev->read_queue);
+        INIT_LIST_HEAD(&infac_dev->write_pool);
+        INIT_DELAYED_WORK(&infac_dev->push, hs_rx_push);
 
+        status = usb_add_function(conf, &infac_dev->func);
 
-    spin_lock_irqsave(&infac_dev->lock, flags);
-    su_function_start(infac_dev);
-    spin_unlock_irqrestore(&infac_dev->lock, flags);
+        if (status) {
+            printk("usb_add_function fail; \n");
+            usb_put_function(&infac_dev->func);
+        }
+    }
+
+    return status;
+}
+
+static int hs_usb_gadget_bind(struct usb_composite_dev *cdev)
+{
+    int status;
+    printk(DEBUG_FN_ENTRY_STR);
+
+    status = usb_string_ids_tab(cdev, strings_dev);
+
+    if(status < 0) {
+        return status;
+    }
+
+    device_desc.iManufacturer = strings_dev[USB_GADGET_MANUFACTURER_IDX].id;
+    device_desc.iProduct = strings_dev[USB_GADGET_PRODUCT_IDX].id;
+    status = strings_dev[STRING_DESCRIPTION_IDX].id;
+    usb_gadget_config_driver.iConfiguration = status;
+
+    status = usb_register_ports(cdev, &usb_gadget_config_driver);
+
+    if(status) {
+        printk("usb_register_ports error!!! \n");
+        return status;
+    }
+
+    usb_composite_overwrite_options(cdev, &coverwrite);
 
     return 0;
 }
 
-static void su_function_disable(struct usb_function *f)
+static int hs_usb_gadget_unbind(struct usb_composite_dev *cdev)
 {
-	struct usb_infac_dev *infac_dev = func_to_su(f);
-	//struct usb_composite_dev	*cdev = infac_dev->cdev;
-	unsigned long	flags;
+    printk(DEBUG_FN_ENTRY_STR);
+    usb_put_function(&usb_gadget_dev.infac_dev[0].func);
+    usb_put_function(&usb_gadget_dev.infac_dev[1].func);
 
-	printk("[su] entry %s\n", __func__);
-
-	usb_ep_disable(infac_dev->ep_in);
-	usb_ep_disable(infac_dev->ep_out);
-
-	spin_lock_irqsave(&infac_dev->lock, flags);
-
-	//su_function_free_req_all(infac_dev->ep_out, &infac_dev->read_pool, NULL);
-	//su_function_free_req_all(infac_dev->ep_out, &infac_dev->read_queue, NULL);
-	//su_function_free_req_all(infac_dev->ep_in, &infac_dev->write_pool, NULL);
-	//infac_dev->read_allocated = infac_dev->read_started = 0;
-
-	spin_unlock_irqrestore(&infac_dev->lock, flags);
+    return 0;
 }
 
 
-
-static int su_register_ports(struct usb_composite_dev *cdev,
-		struct usb_configuration *c)
-{
-	int i;
-	int ret;
-	struct usb_infac_dev * infac_dev;
-
-	printk("[su] entry %s\n", __func__);
-	ret = usb_add_config_only(cdev, c);
-	if (ret)
-		return ret;
-
-	for (i = 0; i < USB_INFAC_NUM; i++) {
-
-		infac_dev = &su_dev.usb_infac[i];
-		infac_dev->cdev = c->cdev;
-		if (i)
-			infac_dev->function.name = "su1";
-		else
-			infac_dev->function.name = "su0";
-		infac_dev->function.bind = su_function_bind;
-		infac_dev->function.unbind = su_function_unbind;
-		infac_dev->function.set_alt = su_function_set_alt;
-		infac_dev->function.disable = su_function_disable;
-
-		spin_lock_init(&infac_dev->lock);
-
-		INIT_LIST_HEAD(&infac_dev->read_pool);
-		INIT_LIST_HEAD(&infac_dev->read_queue);
-		INIT_LIST_HEAD(&infac_dev->write_pool);
-		INIT_LIST_HEAD(&infac_dev->write_queue);
-
-		usb_add_function(c, &infac_dev->function);
-	}
-
-	return 0;
-}
-
-
-
-static int su_bind(struct usb_composite_dev *cdev)
-{
-	int	status;
-
-	/* Allocate string descriptor numbers ... note that string
-	 * contents can be overridden by the composite_dev glue.
-	 */
-
-	printk("[su] entry %s\n", __func__);
-
-	status = usb_string_ids_tab(cdev, strings_dev);
-	if (status < 0)
-		goto fail;
-	device_desc.iManufacturer = strings_dev[USB_GADGET_MANUFACTURER_IDX].id;
-	device_desc.iProduct = strings_dev[USB_GADGET_PRODUCT_IDX].id;
-	status = strings_dev[STRING_DESCRIPTION_IDX].id;
-	su_config_driver.iConfiguration = status;
-
-	status = su_register_ports(cdev, &su_config_driver);
-	if (status < 0)
-		goto fail;
-
-	usb_composite_overwrite_options(cdev, &coverwrite);
-	return 0;
-fail:
-	return status;
-}
-
-
-
-static int su_unbind(struct usb_composite_dev *cdev)
-{
-	printk("[su] entry %s\n", __func__);
-	return 0;
-}
-
-static struct usb_composite_driver usb_gadget_driver = {
-	.name		= "su_usb",
-	.dev		= &device_desc,
-	.strings	= dev_strings,
-	.max_speed	= USB_SPEED_HIGH,
-	.bind		= su_bind,
-	.unbind		= su_unbind,
+static struct usb_composite_driver hs_usb_gadget_driver = {
+    .name = "usb_gadget",
+    .dev = &device_desc,
+    .strings = dev_strings,
+    .max_speed = USB_SPEED_HIGH,
+    .bind = hs_usb_gadget_bind,
+    .unbind = hs_usb_gadget_unbind,
 };
 
-#define NEXT_BUF_SZ_OFFSET			(0)
-
-static void sdio_tx_work(struct work_struct *work)
-{
-	t_usb_sdio_dev * p_su = container_of(work, t_usb_sdio_dev, work);
-	int i;
-
-	//printk("[su] entry %s\n", __func__);
-
-	for (i=0; i < USB_INFAC_NUM; i++) {
-		struct usb_infac_dev * infac_dev = &p_su->usb_infac[i];
-		struct list_head *queue = &infac_dev->read_queue;
-		int restart = 0;
-
-		spin_lock_irq(&infac_dev->lock);
-		while (!list_empty(queue)) {
-			struct usb_request	*req;
-			req = list_first_entry(queue, struct usb_request, list);
-
-			switch (req->status) {
-				case -ESHUTDOWN:
-					restart = -1;
-					printk("[su] us%d: shutdown\n", infac_dev->id);
-					break;
-
-				default:
-					/* presumably a transient fault */
-					pr_warn("us%d: unexpected RX status %d\n",
-						infac_dev->id, req->status);
-					/* FALLTHROUGH */
-				case 0:
-					/* normal completion */
-					printk("usb rx length:%d \n", req->length);
-					print_hex_dump(KERN_DEBUG, "usb_rx: ", DUMP_PREFIX_NONE, 32, 1, req->buf, req->length, false);
-					break;
-			}
-
-			spin_unlock_irq(&infac_dev->lock);
-
-			if (restart >= 0) {
-				//sdio_xmit(req);
-				restart = 1;
-			} 
-
-			spin_lock_irq(&infac_dev->lock);
-			list_move(&req->list, &infac_dev->read_pool);
-			infac_dev->read_started--;
-		}
-
-		if (restart == 1) {
-			int ack[] = {0x12, 0x34, 0x56, 0x78};
-			printk("usb tx ack:%d, read:%d, write:%d \n", sizeof(ack), infac_dev->read_allocated, infac_dev->write_allocated);
-			usb_xmit(p_su->usb_infac[0].ep_in, (void*)ack, sizeof(ack));
-			su_function_start(infac_dev);
-		} else if (restart < 0){
-			printk("[su] entry %s, stop!\n", __func__);
-		}
-
-		spin_unlock_irq(&infac_dev->lock);
-	}
-}
-
-#define FW_BLOCK_SIZE 4096
-
-
-#include <linux/sched.h>
-#include <uapi/linux/sched/types.h>
-
-static int usb_xmit(struct usb_ep *ep_in, void *data, int len)
-{
-    struct usb_request *req;
-    struct sk_buff  *skb;
-
-     printk("[su] entry %s, len:%d! \n", __func__, len);
-    skb = dev_alloc_skb(1024);
-    if (!skb) {
-        printk("[su] entry %s, no skb!\n", __func__);
-        return NULL;
-    }
-
-    memcpy(skb->data, data, len);
-    skb->len = len;
-    req = usb_ep_alloc_request(ep_in, GFP_ATOMIC);
-    if (req != NULL) {
-        req->length = len;
-        req->buf = skb->data;
-        req->context = skb;
-    } else {
-        printk("[su] entry %s, no req!\n", __func__);
-        dev_kfree_skb(skb);
-    }
-
-    usb_ep_queue(ep_in, req, GFP_ATOMIC);
-
-    return 0;
-}
-
+#if 0
 static int usb_gadget_init(void)
 {
-	int ret;
-	t_usb_sdio_dev * p_su = &su_dev;
-	printk("[su] entry %s\n", __func__);
+    int ret = 0;
 
-	strings_dev[STRING_DESCRIPTION_IDX].s = su_config_driver.label;
+    printk(DEBUG_FN_ENTRY_STR);
+    ret = usb_composite_probe(&usb_gadget_driver);
+    if(ret) {
+        printk("usb composite error!! \n");
+    }
 
-	INIT_WORK(&p_su->work, sdio_tx_work);
-
-	p_su->workqueue = create_singlethread_workqueue("wq_sdio_tx");
-	if (! p_su->workqueue)
-		return  -ENOMEM;
-
-	ret =  usb_composite_probe(&usb_gadget_driver);
-	if (ret) {
-		destroy_workqueue(p_su->workqueue);
-		return ret;
-	}
-
-	debugfs_su_init();
-	return ret;
+    return ret;
 }
 
 static void usb_gadget_exit(void)
 {
-	printk("[su] entry %s\n", __func__);
-	usb_composite_unregister(&usb_gadget_driver);
-	destroy_workqueue(su_dev.workqueue);
-	debugfs_su_exit();
+    printk(DEBUG_FN_ENTRY_STR);
 }
-
 
 module_init(usb_gadget_init);
 module_exit(usb_gadget_exit);
+#endif
 
+module_usb_composite_driver(hs_usb_gadget_driver);
 
-MODULE_AUTHOR("Leon");
+MODULE_DESCRIPTION("raspberry Pi4 usb gadget driver");
+//MODULE_AOTHOR("Leon");
 MODULE_LICENSE("Dual BSD/GPL");
