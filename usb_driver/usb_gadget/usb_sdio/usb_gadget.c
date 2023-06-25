@@ -137,6 +137,7 @@ static struct usb_descriptor_header *usb_fs_function[] = {
 };
 
 /* high speed support: */
+#if 0
 static struct usb_endpoint_descriptor usb_hs_notify_desc = {
 	.bLength =		USB_DT_ENDPOINT_SIZE,
 	.bDescriptorType =	USB_DT_ENDPOINT,
@@ -145,6 +146,7 @@ static struct usb_endpoint_descriptor usb_hs_notify_desc = {
 	.wMaxPacketSize =	cpu_to_le16(HS_NOTIFY_MAXPACKET),
 	.bInterval =		USB_MS_TO_HS_INTERVAL(GS_NOTIFY_INTERVAL_MS),
 };
+#endif
 
 static struct usb_endpoint_descriptor usb_hs_in_desc = {
 	.bLength =		USB_DT_ENDPOINT_SIZE,
@@ -265,6 +267,95 @@ static void hs_free_requests(struct usb_ep *ep, struct list_head *head, int *all
 	}
 }
 
+static void hs_read_complete(struct usb_ep *ep, struct usb_request *req)
+{
+	struct usb_infac_dev *infac_dev = ep->driver_data;
+    printk(DEBUG_FN_ENTRY_STR);
+
+	/* Queue all received data until the tty layer is ready for it. */
+	spin_lock(&infac_dev->dev_lock);
+	list_add_tail(&req->list, &infac_dev->read_queue);
+	schedule_delayed_work(&infac_dev->push, 0);
+	spin_unlock(&infac_dev->dev_lock);
+}
+
+static int hs_start_rx(struct usb_infac_dev *infac_dev)
+{
+    struct list_head* pool = &infac_dev->read_pool;
+    struct usb_ep *out = infac_dev->ep_out;
+    int status = 0;
+    printk(DEBUG_FN_ENTRY_STR);
+
+    while(!list_empty(pool)) {
+		struct usb_request *req;
+
+		if (infac_dev->read_started >= QUEUE_SIZE) {
+            printk("read started is large than QUEUE_SIZE, break! \n");
+            break;
+		}
+
+		req = list_entry(pool->next, struct usb_request, list);
+		list_del(&req->list);
+		//req->length = out->maxpacket;
+
+		/* drop lock while we call out; the controller driver
+		 * may need to call us back (e.g. for disconnect)
+		 */
+		spin_unlock(&infac_dev->dev_lock);
+		status = usb_ep_queue(out, req, GFP_ATOMIC);
+		spin_lock(&infac_dev->dev_lock);
+
+		if (status) {
+			pr_debug("%s: %s %s err %d\n",
+					__func__, "queue", out->name, status);
+			list_add(&req->list, pool);
+			break;
+		}
+		infac_dev->read_started++;
+	}
+
+    printk("%s:read_started:%d \n", __func__, infac_dev->read_started);
+	return infac_dev->read_started;
+}
+
+static int hs_start_tx(struct usb_infac_dev *infac_dev)
+{
+	struct list_head *pool = &infac_dev->write_pool;
+	struct usb_ep *in = infac_dev->ep_in;
+	int status = 0;
+
+    printk(DEBUG_FN_ENTRY_STR);
+
+	while (!infac_dev->write_busy && !list_empty(pool)) {
+		struct usb_request	*req;
+
+		if (infac_dev->write_started >= QUEUE_SIZE) {
+            printk("write started is large than QUEUE_SIZE, break! \n");
+            break;
+		}
+
+		req = list_entry(pool->next, struct usb_request, list);
+		
+
+		infac_dev->write_busy = true;
+		spin_unlock(&infac_dev->dev_lock);
+		status = usb_ep_queue(in, req, GFP_ATOMIC);
+		spin_lock(&infac_dev->dev_lock);
+		infac_dev->write_busy = false;
+
+		if (status) {
+			pr_debug("%s: %s %s err %d\n",
+					__func__, "queue", in->name, status);
+			list_add(&req->list, pool);
+			break;
+		}
+
+		infac_dev->write_started++;
+	}
+
+	return status;
+}
+
 static void hs_rx_push(struct work_struct *work)
 {
     struct delayed_work	*w = to_delayed_work(work);
@@ -299,106 +390,25 @@ static void hs_rx_push(struct work_struct *work)
 
 		list_move(&req->list, &infac_dev->read_pool);
 		infac_dev->read_started--;
+		printk("%s:read_started:%d, restart:%d \n", __func__, infac_dev->read_started, restart);
 	}
 
-    if(restart > 0) {
-        restart = 1;
-    }
 
-	spin_unlock_irq(&infac_dev->dev_lock);
-
-	if (restart == 1) {
+	if (restart == true) {
 			int ack[] = {0x12, 0x34, 0x56, 0x78};
-			printk("usb tx ack:%d, read:%d, write:%d \n", sizeof(ack), infac_dev->read_allocated, infac_dev->write_allocated);
+			//printk("usb tx ack:%d, read:%d, write:%d \n", sizeof(ack), infac_dev->read_allocated, infac_dev->write_allocated);
 			//usb_xmit(infac_dev->ep_in, (void*)ack, sizeof(ack));
 			//su_function_start(infac_dev);
 		} else {
 			printk("[su] entry %s, stop!\n", __func__);
 		}
-}
 
-static void hs_read_complete(struct usb_ep *ep, struct usb_request *req)
-{
-	struct usb_infac_dev *infac_dev = ep->driver_data;
-    printk(DEBUG_FN_ENTRY_STR);
-
-	/* Queue all received data until the tty layer is ready for it. */
-	spin_lock(&infac_dev->dev_lock);
-	list_add_tail(&req->list, &infac_dev->read_queue);
-	schedule_delayed_work(&infac_dev->push, 0);
-	spin_unlock(&infac_dev->dev_lock);
-}
-
-static int hs_start_rx(struct usb_infac_dev *infac_dev)
-{
-    struct list_head* pool = &infac_dev->read_pool;
-    struct usb_ep *out = infac_dev->ep_out;
-    int status = 0;
-    printk(DEBUG_FN_ENTRY_STR);
-
-    while(!list_empty(pool)) {
-		struct usb_request *req;
-
-		if (infac_dev->read_started >= QUEUE_SIZE)
-			break;
-
-		req = list_entry(pool->next, struct usb_request, list);
-		list_del(&req->list);
-		req->length = out->maxpacket;
-
-		/* drop lock while we call out; the controller driver
-		 * may need to call us back (e.g. for disconnect)
-		 */
-		spin_unlock(&infac_dev->dev_lock);
-		status = usb_ep_queue(out, req, GFP_ATOMIC);
-		spin_lock(&infac_dev->dev_lock);
-
-		if (status) {
-			pr_debug("%s: %s %s err %d\n",
-					__func__, "queue", out->name, status);
-			list_add(&req->list, pool);
-			break;
-		}
-		infac_dev->read_started++;
+	/* If read_queue is empty, refill the USB RX queue. */
+	//usb_gadget_function_start(infac_dev);
+	if(!infac_dev->read_started) {
+    	hs_start_rx(infac_dev);
 	}
-
-	return status;
-}
-
-static int hs_start_tx(struct usb_infac_dev *infac_dev)
-{
-	struct list_head *pool = &infac_dev->write_pool;
-	struct usb_ep *in = infac_dev->ep_in;
-	int status = 0;
-
-    printk(DEBUG_FN_ENTRY_STR);
-
-	while (!infac_dev->write_busy && !list_empty(pool)) {
-		struct usb_request	*req;
-
-		if (infac_dev->write_started >= QUEUE_SIZE)
-			break;
-
-		req = list_entry(pool->next, struct usb_request, list);
-		
-
-		infac_dev->write_busy = true;
-		spin_unlock(&infac_dev->dev_lock);
-		status = usb_ep_queue(in, req, GFP_ATOMIC);
-		spin_lock(&infac_dev->dev_lock);
-		infac_dev->write_busy = false;
-
-		if (status) {
-			pr_debug("%s: %s %s err %d\n",
-					__func__, "queue", in->name, status);
-			list_add(&req->list, pool);
-			break;
-		}
-
-		infac_dev->write_started++;
-	}
-
-	return status;
+	spin_unlock_irq(&infac_dev->dev_lock);
 }
 
 static void hs_write_complete(struct usb_ep *ep, struct usb_request *req)
@@ -417,7 +427,7 @@ static void hs_write_complete(struct usb_ep *ep, struct usb_request *req)
 		fallthrough;
 	case 0:
 		/* normal completion */
-		hs_start_tx(infac_dev);
+		//hs_start_tx(infac_dev);
 		break;
 
 	case -ESHUTDOWN:
@@ -462,7 +472,7 @@ static int usb_gadget_function_start(struct usb_infac_dev *infac_dev)
         hs_free_requests(infac_dev->ep_out, &infac_dev->write_pool, &infac_dev->write_allocated);
         status = -EIO;
     }else {
-        hs_start_tx(infac_dev);
+        //hs_start_tx(infac_dev);
     }
 
     return status;
@@ -511,7 +521,6 @@ static int usb_func_bind(struct usb_configuration *c, struct usb_function *f)
 	usb_ss_out_desc.bEndpointAddress = usb_fs_out_desc.bEndpointAddress;
 
 	status = usb_assign_descriptors(f, usb_fs_function, usb_hs_function, usb_ss_function, usb_ss_function);
-	//status = usb_assign_descriptors(f, usb_fs_function, usb_hs_function, usb_ss_function, NULL);
 
 	if (status)
 		return status;
