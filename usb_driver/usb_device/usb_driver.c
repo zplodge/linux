@@ -217,7 +217,7 @@ static int usb_hif_start(struct usb_host_priv *tr)
 
 int usb_hif_xmit(struct usb_host_priv *tr, struct sk_buff *skb)
 {
-    struct urb*urb;
+    struct urb* urb;
     struct usb_urb_context* urb_context = NULL;
     int ret;
 
@@ -237,6 +237,7 @@ int usb_hif_xmit(struct usb_host_priv *tr, struct sk_buff *skb)
     urb_context->urb = urb;
     urb_context->skb = skb;
     urb->context = urb_context;
+    urb->actual_length = skb->len;
 
     usb_fill_bulk_urb(urb,
         tr->udev,
