@@ -1,10 +1,8 @@
 USBTOSDIODIR = $(PWD)
 
-# KDIR ?= /lib/modules/$(shell uname -r)/build
+
 DRIVER_PATH := $(shell pwd)
-#export KERNELDIR ?= $(DRIVER_PATH)/../../../../../../out/target/product/T963/obj/KERNEL_OBJ
-#export KBUILDDIR ?= $(DRIVER_PATH)/../../../../../../out/target/product/T963/obj/KERNEL_OBJ
-#CROSS_COMPILE ?= /opt/gcc-linaro-6.3.1-2017.02-x86_64_arm-linux-gnueabihf/bin/arm-linux-gnueabihf-
+
 ARCH := arm
 export KERNELDIR=/lib/modules/$(shell uname -r)/build
 export KBUILDDIR=/lib/modules/$(shell uname -r)/build
@@ -12,11 +10,11 @@ export KBUILDDIR=/lib/modules/$(shell uname -r)/build
 # include $(KERNELDIR)/.config
 
 
-MOD_SRC = st
+MOD_SRC = usb_test
 
 obj-m +=$(MOD_SRC).o
 $(MOD_SRC)-objs = \
-	skb_test.o \
+	usb_driver.o \
 
 
 ccflags-y := 
